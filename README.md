@@ -9,7 +9,7 @@ Primer flujo de colaboración validado localmente: registro y verificación de c
 ## Estructura
 
 - `apps/web`: SPA responsive Vue 3, Router y Pinia; selección de hasta 20 fotos JPEG con seguimiento de procesado.
-- `services/api`: Laravel (autenticación, álbumes, invitaciones, subida, moderación y limpieza de subidas caducadas).
+- `services/api`: Laravel (autenticación, álbumes, invitaciones, subida, moderación, ajustes de álbum, miembros y limpieza de subidas caducadas).
 - `infrastructure/docker`: imagen compartida de API, worker y scheduler.
 - `docker-compose.yaml`: stack local (PostgreSQL, Redis, S3Mock, Mailpit, API, worker, scheduler y frontend).
 
@@ -45,4 +45,4 @@ El servicio `scheduler` ejecuta cada hora `php artisan albuvo:cleanup-uploads`, 
 
 ## Seguridad
 
-Los objetos se almacenan en un bucket S3 de desarrollo; el acceso a su URL firmada depende de la autorización de la API. **S3Mock NO valida las firmas ni garantiza la privacidad**: solo debe ejecutarse en localhost. En producción es obligatorio sustituirlo por R2 o S3 con bucket privado, políticas y firmas efectivas, TLS, configuración del dominio público, controles de capacidad y auditoría de seguridad. La generación de miniaturas re-encodifica JPEG y elimina EXIF en las derivadas.
+Los objetos se almacenan en un bucket S3 de desarrollo; el acceso a su URL firmada depende de la autorización de la API. **S3Mock NO valida las firmas ni garantiza la privacidad**: solo debe ejecutarse en localhost. En producción es obligatorio sustituirlo por R2 o S3 con bucket privado, políticas y firmas efectivas, TLS, configuración del dominio público, controles de capacidad y auditoría de seguridad. La generación de miniaturas corrige la orientación EXIF del JPEG antes de re-encodificarlo, y elimina metadatos EXIF en las imágenes derivadas.

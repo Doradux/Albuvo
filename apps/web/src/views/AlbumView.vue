@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
-import { ArrowLeft, Plus, QrCode, Copy, LockKeyhole, UploadCloud, Check, X, ShieldCheck, Images, Clock3, UsersRound, ImagePlus, Link as LinkIcon, RefreshCcw, Eye, ArrowUpRight } from '@lucide/vue'
+import { ArrowLeft, Plus, QrCode, Copy, LockKeyhole, UploadCloud, Check, X, ShieldCheck, Images, Clock3, UsersRound, ImagePlus, Link as LinkIcon, RefreshCcw, Eye, ArrowUpRight, Settings2, Save, Trash2 } from '@lucide/vue'
 import QRCode from 'qrcode'
 import { api, bytes, getGuest, uploadToSignedUrl, type Album, type Photo } from '../lib/api'
 import { useSession } from '../stores/session'
 const route=useRoute();const session=useSession()
 const id=String(route.params.id)
 const album=ref<Album|null>(null); const role=ref('');const canUpload=ref(false);const canModerate=ref(false)
-const photos=ref<Photo[]>([]);const pending=ref<Photo[]>([]);const tab=ref<'gallery'|'moderation'|'sharing'>('gallery')
+const photos=ref<Photo[]>([]);const pending=ref<Photo[]>([]);const tab=ref<'gallery'|'moderation'|'sharing'|'settings'>('gallery')
 const loading=ref(true);const busy=ref(false);const error=ref('');const notice=ref('');const shareUrl=ref('')
 const qr=ref('');const uploadPercent=ref<number|null>(null);const uploadStage=ref('');const selected=ref<Photo|null>(null)
 const invites=ref<{id:string;scope:string;revoked_at:string|null;expires_at:string;used_count:number}[]>([])
 const memberEmail=ref('');const memberRole=ref('viewer')
+const members=ref<{id:string;name:string;email:string;role:string}[]>([])
+const editTitle=ref('');const editDescription=ref('');const editAllowGuests=ref(true);const editModeration=ref(true)
 const isOwner=computed(()=>['owner','admin'].includes(role.value))
 async function refresh() {
   const guest=getGuest(id)
@@ -22,7 +24,16 @@ async function refresh() {
   if(canModerate.value) pending.value=(await api<{media:Photo[]}>('GET','/albums/'+id+'/moderation',undefined,guest)).media
 }
 async function load() {
-  try {await session.hydrate();await refresh();if(route.query.new==='1')tab.value='sharing'}
+  try {
+    await session.hydrate();await refresh()
+    if(album.value) {
+      editTitle.value=album.value.title
+      editDescription.value=album.value.description||''
+      editAllowGuests.value=Boolean(album.value.allow_guest_upload)
+      editModeration.value=Boolean(album.value.require_upload_approval)
+    }
+    if(route.query.new==='1') {tab.value='sharing';await Promise.all([loadInvites(),loadMembers()])}
+  }
   catch(e){error.value=(e as Error).message}finally{loading.value=false}
 }
 let refreshTimer:ReturnType<typeof setInterval>|undefined
@@ -56,8 +67,31 @@ async function revoke(inviteId:string) {
   catch(e){error.value=(e as Error).message}
 }
 async function copyLink(){if(!shareUrl.value)return;try{await navigator.clipboard.writeText(shareUrl.value);notice.value='Enlace copiado.'}catch{notice.value='Selecciona el enlace para copiarlo.'}}
+async function loadMembers(){
+  if(!isOwner.value)return
+  members.value=(await api<{members:typeof members.value}>('GET','/albums/'+id+'/members')).members
+}
+async function removeMember(memberId:string){
+  if(!confirm('¿Quitar a esta persona del álbum? Perderá el acceso.'))return
+  try {
+    await api('DELETE','/albums/'+id+'/members/'+memberId)
+    await loadMembers()
+    notice.value='Acceso retirado.'
+  }catch(e){error.value=(e as Error).message}
+}
+async function saveSettings(){
+  busy.value=true;error.value=''
+  try {
+    const result=await api<{album:Album}>('PATCH','/albums/'+id,{
+      title:editTitle.value.trim(),description:editDescription.value.trim(),
+      allow_guest_upload:editAllowGuests.value,require_upload_approval:editModeration.value
+    })
+    album.value=result.album
+    notice.value='Ajustes guardados.'
+  }catch(e){error.value=(e as Error).message}finally{busy.value=false}
+}
 async function addMember(){
-  try {await api('POST','/albums/'+id+'/members',{email:memberEmail.value,role:memberRole.value});memberEmail.value='';notice.value='Acceso concedido.'}
+  try {await api('POST','/albums/'+id+'/members',{email:memberEmail.value,role:memberRole.value});memberEmail.value='';notice.value='Acceso concedido.';await loadMembers()}
   catch(e){error.value=(e as Error).message}
 }
 async function waitForPhoto(uploadId:string,guest?:string):Promise<string> {
@@ -128,7 +162,7 @@ const myUploads=computed(()=>photos.value.filter(p=>p.status!=='approved'))
     <template v-else>
       <div class="album-hero"><div class="album-hero-art"><span>✿</span></div><div class="album-hero-copy"><span class="pill"><LockKeyhole :size="14"/> Álbum privado</span><h1>{{album.title}}</h1><p>{{album.description||'Cada foto cuenta una historia. Esta es la vuestra.'}}</p><div class="album-meta"><span><Images :size="17"/> {{published.length}} fotos</span><span><ShieldCheck :size="17"/> {{canModerate?'Puedes moderar':role==='guest'?'Invitado':'Acceso autorizado'}}</span><span>{{bytes(album.used_bytes)}} / {{bytes(album.quota_bytes)}}</span></div></div></div>
       <div v-if="notice" class="form-success">{{notice}}</div><div v-if="error" class="form-error" role="alert">{{error}}</div>
-      <div class="album-toolbar"><div class="tabs"><button :class="{selected:tab==='gallery'}" @click="tab='gallery'"><Images :size="18"/> Galería</button><button v-if="canModerate" :class="{selected:tab==='moderation'}" @click="tab='moderation'"><ShieldCheck :size="18"/> Pendientes <span v-if="pending.length" class="tab-count">{{pending.length}}</span></button><button v-if="isOwner" :class="{selected:tab==='sharing'}" @click="tab='sharing';loadInvites()"><UsersRound :size="18"/> Compartir</button></div><label v-if="canUpload" class="btn btn-dark upload-label"><UploadCloud :size="18"/> {{busy?'Subiendo...':'Subir fotos'}}<input type="file" accept="image/jpeg,.jpg,.jpeg" multiple :disabled="busy" @change="onFile" hidden/></label></div>
+      <div class="album-toolbar"><div class="tabs"><button :class="{selected:tab==='gallery'}" @click="tab='gallery'"><Images :size="18"/> Galería</button><button v-if="canModerate" :class="{selected:tab==='moderation'}" @click="tab='moderation'"><ShieldCheck :size="18"/> Pendientes <span v-if="pending.length" class="tab-count">{{pending.length}}</span></button><button v-if="isOwner" :class="{selected:tab==='sharing'}" @click="tab='sharing';void loadInvites();void loadMembers()"><UsersRound :size="18"/> Compartir</button><button v-if="role==='owner'" :class="{selected:tab==='settings'}" @click="tab='settings'"><Settings2 :size="18"/> Ajustes</button></div><label v-if="canUpload" class="btn btn-dark upload-label"><UploadCloud :size="18"/> {{busy?'Subiendo...':'Subir fotos'}}<input type="file" accept="image/jpeg,.jpg,.jpeg" multiple :disabled="busy" @change="onFile" hidden/></label></div>
       <div v-if="uploadPercent!==null" class="upload-progress"><div class="upload-progress-top"><span>{{uploadStage||'Subiendo fotos...'}}</span><strong>{{uploadPercent}} %</strong></div><div class="progress-track"><div :style="{width:uploadPercent+'%'}"></div></div></div>
       <section v-if="tab==='gallery'"><div class="album-section-head"><h2>Vuestros recuerdos</h2><p>Una historia contada desde todos los puntos de vista.</p></div>
         <div v-if="published.length" class="photo-grid"><button v-for="photo in published" :key="photo.id" class="photo-card" @click="selected=photo"><img :src="photo.thumbnail_url||photo.preview_url||''" alt="Fotografía del álbum" loading="lazy"/><span class="photo-hover"><Eye :size="23"/></span></button></div>
@@ -144,8 +178,10 @@ const myUploads=computed(()=>photos.value.filter(p=>p.status!=='approved'))
           <div v-if="shareUrl" class="share-result"><img v-if="qr" :src="qr" alt="Código QR de invitación" class="qr-image"/><div class="share-input"><input class="field" readonly :value="shareUrl" aria-label="Enlace privado de invitación"/><button class="icon-button" title="Copiar enlace" @click="copyLink"><Copy :size="19"/></button></div><small>Guarda este enlace ahora. Por seguridad no podrá recuperarse después.</small></div>
         </div>
         <div class="share-side"><div class="surface side-panel"><h3><LinkIcon :size="18"/> Invitaciones activas</h3><p class="muted">Revoca accesos cuando lo necesites.</p><div v-if="!invites.length" class="muted">Todavía no has creado invitaciones.</div><div v-for="invite in invites" :key="invite.id" class="invite-row"><div><strong>Enlace para {{invite.scope==='upload'?'subir fotos':'ver'}}</strong><span>{{invite.revoked_at?'Revocado':'Válido hasta '+new Date(invite.expires_at).toLocaleDateString('es-ES')}}</span></div><button v-if="!invite.revoked_at" class="btn btn-danger btn-small" @click="revoke(invite.id)">Revocar</button></div></div>
+          <div class="surface side-panel"><h3><UsersRound :size="18"/> Miembros registrados</h3><p class="muted">Solo los miembros autorizados pueden ver este álbum.</p><div v-if="!members.length" class="muted">Cargando miembros...</div><div v-for="member in members" :key="member.id" class="invite-row"><div><strong>{{member.name}}</strong><span>{{member.email}} · {{member.role==='owner'?'Propietario':member.role==='admin'?'Administrador':member.role==='viewer'?'Solo lectura':member.role==='contributor'?'Colaborador':'Moderador'}}</span></div><button v-if="member.role!=='owner' && (role==='owner'||member.role!=='admin')" type="button" class="btn btn-danger btn-small" @click="removeMember(member.id)"><Trash2 :size="15"/> Quitar</button></div></div>
           <form class="surface side-panel" @submit.prevent="addMember"><h3><UsersRound :size="18"/> Añadir miembro</h3><p class="muted">Para una persona que ya tenga cuenta en Albuvo.</p><input v-model="memberEmail" class="field" required type="email" placeholder="persona@correo.com"/><select v-model="memberRole" class="field"><option value="viewer">Puede ver</option><option value="contributor">Puede subir fotos</option><option value="moderator">Puede moderar</option></select><button class="btn btn-dark btn-small" type="submit">Conceder acceso <ArrowUpRight :size="16"/></button></form></div>
       </section>
+      <section v-else-if="tab==='settings'" class="sharing-layout"><form class="surface share-panel" @submit.prevent="saveSettings"><div class="panel-icon"><Settings2 :size="27"/></div><h2>Ajustes del álbum</h2><p>Personaliza tu espacio privado. Solo el propietario puede cambiar estas opciones.</p><div class="form-row"><label for="edit-title" class="form-label">Nombre del álbum</label><input id="edit-title" v-model="editTitle" class="field" required maxlength="100"/></div><div class="form-row"><label for="edit-description" class="form-label">Descripción</label><textarea id="edit-description" v-model="editDescription" class="field" maxlength="500" rows="3"/></div><label class="toggle-row"><div><strong>Permitir subidas de invitados</strong><p>Solo con invitación de colaboración activa.</p></div><input v-model="editAllowGuests" type="checkbox" role="switch"/></label><label class="toggle-row"><div><strong>Aprobar fotos antes de publicarlas</strong><p>Las nuevas imágenes deberán pasar por tu revisión.</p></div><input v-model="editModeration" type="checkbox" role="switch"/></label><button class="btn btn-dark" type="submit" :disabled="busy"><Save :size="17"/> {{busy?'Guardando...':'Guardar ajustes'}}</button></form><div class="surface side-panel"><h3><LockKeyhole :size="18"/> Privado desde el principio</h3><p class="muted">Tu álbum no se publica en búsquedas. Si ya has entregado invitaciones, puedes revocarlas desde Compartir.</p><p class="muted">El nombre y la descripción pueden cambiarse sin invalidar los enlaces.</p></div></section>
       <button class="refresh-button" @click="refresh" title="Actualizar galería"><RefreshCcw :size="16"/> Actualizar</button>
     </template>
     <div v-if="selected" class="lightbox" role="dialog" aria-modal="true" aria-label="Visor de fotografía" @click.self="selected=null"><button class="lightbox-close" @click="selected=null" aria-label="Cerrar"><X :size="26"/></button><img :src="selected.preview_url||''" alt="Fotografía ampliada"/></div>
