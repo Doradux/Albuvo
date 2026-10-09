@@ -41,10 +41,14 @@ services:
     env_file:
       - ./services/api/.env
     depends_on:
-      - db
-      - redis
-      - s3
-      - mailpit
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      s3:
+        condition: service_started
+      mailpit:
+        condition: service_started
     command: sh -c "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"
     ports:
       - "127.0.0.1:8060:8000"

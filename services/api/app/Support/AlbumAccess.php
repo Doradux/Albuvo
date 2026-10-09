@@ -17,7 +17,7 @@ trait AlbumAccess {
         if ($secret && strlen($secret)>=40) {
             $guest=GuestContributor::where('album_id',$album->id)->where('secret_hash',hash('sha256',$secret))
                 ->with('invite')->first();
-            if ($guest && $guest->invite && $guest->invite->isActive()) {
+            if ($guest && $guest->invite && $guest->invite->isActive(false)) {
                 return ['role'=>'guest','user_id'=>null,'guest_id'=>$guest->id,'invite'=>$guest->invite];
             }
         }

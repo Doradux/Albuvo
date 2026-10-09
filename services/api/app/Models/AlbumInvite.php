@@ -7,8 +7,8 @@ class AlbumInvite extends Model {
     protected $guarded=[];
     protected function casts(): array { return ['expires_at'=>'datetime','revoked_at'=>'datetime']; }
     public function album() { return $this->belongsTo(Album::class); }
-    public function isActive(): bool {
+    public function isActive(bool $requireUnusedCapacity=true): bool {
         return !$this->revoked_at && $this->expires_at->isFuture()
-            && ($this->max_uses===null || $this->used_count<$this->max_uses);
+            && (!$requireUnusedCapacity || $this->max_uses===null || $this->used_count<$this->max_uses);
     }
 }

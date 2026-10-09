@@ -4,6 +4,7 @@ namespace Tests\Feature;
 use App\Models\Album;
 use App\Models\AlbumInvite;
 use App\Models\AlbumMember;
+use App\Models\GuestContributor;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -44,4 +45,20 @@ class PrivacyTest extends TestCase {
         $this->postJson('/api/v1/album-invites/resolve',
             ['token'=>$token,'display_name'=>'Persona invitada','accept_rules'=>true])->assertNotFound();
     }
+    public function test_accepted_guest_keeps_access_when_invite_use_limit_is_reached(): void {
+        $owner=User::factory()->create();
+        $album=$this->makeAlbum($owner);
+        $token=Str::random(64); $secret=Str::random(64);
+        $invite=AlbumInvite::create(['album_id'=>$album->id,'created_by'=>$owner->id,
+            'token_hash'=>hash('sha256',$token),'scope'=>'upload','expires_at'=>now()->addDay(),
+            'max_uses'=>1,'used_count'=>1]);
+        GuestContributor::create(['album_id'=>$album->id,'invite_id'=>$invite->id,
+            'display_name'=>'Invitado','secret_hash'=>hash('sha256',$secret),
+            'consent_version'=>'draft-2026-10']);
+        $this->getJson('/api/v1/albums/'.$album->id,['X-Guest-Token'=>$secret])
+            ->assertOk()->assertJsonPath('role','guest');
+        $this->postJson('/api/v1/album-invites/resolve',
+            ['token'=>$token,'display_name'=>'Otro invitado','accept_rules'=>true])->assertNotFound();
+    }
+
 }
