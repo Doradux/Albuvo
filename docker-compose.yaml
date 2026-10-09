@@ -18,23 +18,15 @@ services:
     volumes:
       - redis_data:/data
   s3:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+    image: adobe/s3mock:latest
     environment:
-      MINIO_ROOT_USER: albuvo_local
-      MINIO_ROOT_PASSWORD: local_minio_password_123456
-      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:5174"
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: albuvo-private-local
+      COM_ADOBE_TESTING_S3MOCK_STORE_ROOT: /s3mockroot
+      COM_ADOBE_TESTING_S3MOCK_STORE_RETAIN_FILES_ON_EXIT: "true"
     volumes:
-      - media_data:/data
+      - media_data:/s3mockroot
     ports:
-      - "9002:9000"
-      - "127.0.0.1:9003:9001"
-  s3-init:
-    image: minio/mc:latest
-    depends_on:
-      - s3
-    entrypoint: /bin/sh
-    command: -c "until mc alias set local http://s3:9000 albuvo_local local_minio_password_123456; do sleep 2; done; mc mb -p local/albuvo-private-local || true; mc anonymous set none local/albuvo-private-local"
+      - "127.0.0.1:9002:9090"
   mailpit:
     image: axllent/mailpit:latest
     ports:
@@ -51,11 +43,11 @@ services:
     depends_on:
       - db
       - redis
-      - s3-init
+      - s3
       - mailpit
     command: sh -c "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"
     ports:
-      - "8060:8000"
+      - "127.0.0.1:8060:8000"
   worker:
     build:
       context: .
@@ -79,7 +71,7 @@ services:
       - api
     command: sh -c "npm run dev -- --host 0.0.0.0 --port 5173"
     ports:
-      - "5174:5173"
+      - "127.0.0.1:5174:5173"
 volumes:
   pg_data:
   redis_data:
