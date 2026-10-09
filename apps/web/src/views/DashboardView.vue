@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ArrowUpRight, Plus, FolderOpen, Images, Search, ShieldCheck, ArrowRight, Mail } from '@lucide/vue'
 import { api, bytes, type Album } from '../lib/api'
 import { useSession } from '../stores/session'
-const session=useSession(); const router=useRouter()
-const albums=ref<Album[]>([]); const filter=ref(''); const loading=ref(true); const error=ref('')
+const session=useSession(); const router=useRouter();const route=useRoute()
+const albums=ref<Album[]>([]); const filter=ref(''); const loading=ref(true); const error=ref('');const notice=ref('')
 const filtered=computed(()=>albums.value.filter(a=>a.title.toLowerCase().includes(filter.value.toLowerCase())))
 const colors=['#dcead8','#f6e2c3','#e5def4','#f4d9d9','#d7e7f0']
 async function load() {
   await session.hydrate()
   if(!session.user) { await router.replace('/login');return }
+  if(route.query.google==='linked') notice.value='Tu cuenta de Google se ha vinculado correctamente.'
+  if(route.query.google==='connected') notice.value='Has iniciado sesión con Google correctamente.'
+  const googleError=String(route.query.google_error||'')
+  if(googleError==='different_email') error.value='Utiliza la misma dirección de correo de tu cuenta Albuvo para vincular Google.'
+  else if(googleError==='identity_in_use') error.value='Esa cuenta de Google ya está vinculada a otro usuario.'
   try { albums.value=(await api<{albums:Album[]}>('GET','/albums')).albums }
   catch(e) { error.value=(e as Error).message }
   finally{loading.value=false}
@@ -21,6 +26,8 @@ onMounted(load)
 <template>
   <div class="dashboard page-pad"><div class="container">
     <div class="dashboard-welcome"><div><span class="eyebrow">Tu pequeño rincón de recuerdos</span><h1>Hola, {{session.user?.name?.split(' ')[0]||'de nuevo'}} <span class="welcome-flower">✳</span></h1><p>Todos tus momentos especiales, reunidos aquí.</p></div><RouterLink class="btn btn-dark" to="/new"><Plus :size="18"/> Nuevo álbum</RouterLink></div>
+    <div v-if="notice" class="form-success">{{notice}}</div>
+    <div v-if="session.user" class="google-link-panel"><div><strong>{{session.user.google_connected?'Google conectado':'Vincula tu cuenta de Google'}}</strong><p>{{session.user.google_connected?'Puedes iniciar sesión en Albuvo usando Google.':'Mantén tus álbumes y entra con Google la próxima vez. Se exige el mismo correo.'}}</p></div><a v-if="!session.user.google_connected" class="btn btn-light btn-small" href="/api/v1/auth/google/redirect?intent=link">Vincular Google <ArrowUpRight :size="16"/></a></div>
     <div v-if="session.user && !session.user.email_verified_at" class="notice"><Mail :size="21"/><div><strong>Verifica tu correo para crear álbumes.</strong><p>Te hemos enviado un enlace de confirmación.</p></div><button class="btn btn-ghost btn-small" @click="resend">Reenviar</button></div>
     <div class="album-heading"><div><h2>Mis álbumes <span v-if="albums.length" class="album-count">{{albums.length}}</span></h2><p>Recuerdos que van creciendo contigo.</p></div><label class="search-field"><Search :size="18"/><input v-model="filter" placeholder="Buscar álbum..." aria-label="Buscar álbum"/></label></div>
     <div v-if="error" class="form-error">{{error}}</div>

@@ -1,4 +1,4 @@
-export type User = { id: string; name: string; email: string; email_verified_at: string | null }
+export type User = { id: string; name: string; email: string; email_verified_at: string | null; google_connected?: boolean }
 export type Album = { id:string; title:string; description:string|null; slug:string; status:string; visibility:string; used_bytes:number; quota_bytes:number; reserved_bytes?:number; media_count?:number; created_at:string; allow_guest_upload?:boolean; require_upload_approval?:boolean }
 export type Photo = { id:string; status:string; created_at:string; width:number|null; height:number|null; preview_url:string|null; thumbnail_url:string|null; reason:string|null }
 

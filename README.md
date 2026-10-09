@@ -43,6 +43,32 @@ La prueba de integración crea usuarios, álbum e imagen **sintéticos** en el s
 
 El servicio `scheduler` ejecuta cada hora `php artisan albuvo:cleanup-uploads`, liberando la cuota reservada por subidas abandonadas. Todos los contenedores de desarrollo tienen `restart: unless-stopped`. Para detenerlos: `docker compose down` (sin `-v` para conservar datos).
 
+## Inicio de sesión con Google
+
+La aplicación ofrece **Continuar con Google** en `/login` y `/signup` mediante Laravel Socialite (OAuth 2.0 con estado CSRF en sesión). Las credenciales OAuth pertenecen al propietario del proyecto y **no están incluidas** en Git ni pueden inventarse.
+
+1. Accede a [Google Auth Platform](https://console.cloud.google.com/auth/overview), selecciona/crea un proyecto y configura la marca **Albuvo** y la audiencia (para desarrollo puedes usar modo pruebas). En [Audience](https://console.cloud.google.com/auth/audience) añade las cuentas de prueba cuando sea necesario.
+2. En [Clients](https://console.cloud.google.com/auth/clients), crea un **cliente OAuth** de tipo **Aplicación web**.
+3. Indica el origen local `http://localhost:5174` y, en **URI de redireccionamiento autorizados**, exactamente:
+
+   `http://localhost:5174/api/v1/auth/google/callback`
+
+4. Copia el **Client ID** y el **Client secret** a `services/api/.env` (el archivo está ignorado por Git):
+
+   ```dotenv
+   GOOGLE_CLIENT_ID=TU_CLIENT_ID
+   GOOGLE_CLIENT_SECRET=TU_CLIENT_SECRET
+   GOOGLE_REDIRECT_URI=http://localhost:5174/api/v1/auth/google/callback
+   ```
+
+5. Reconstruye el contenedor con el nuevo entorno: `docker compose up -d --force-recreate api worker scheduler`. Después abre `http://localhost:5174/login`.
+
+**Importante:** Google redirigirá el navegador a `localhost:5174` **en el mismo equipo que lo use**. Si vas a abrir la aplicación desde otra red, crea un túnel que publique también esa dirección o configura un dominio HTTPS y un callback idéntico en Google Cloud y en `.env`. En producción exige HTTPS, despliegue de cookies/sesión correctamente configurado y revisión de OAuth.
+
+El registro nuevo con Google requiere aceptar las condiciones antes de iniciar OAuth; el correo debe venir verificado por Google. El inicio de sesión con Google **no vincula automáticamente** una cuenta local existente que tenga el mismo correo. Para vincularla, inicia sesión con tu contraseña habitual y pulsa **Vincular Google** en *Mis álbumes*; se exige que el correo coincida. No se guardan contraseñas ni tokens de acceso de Google.
+
+**Estado:** el flujo y sus pruebas están implementados, pero el inicio real no podrá completarse hasta que Google Cloud emita las credenciales y se configuren localmente.
+
 ## Seguridad
 
 Los objetos se almacenan en un bucket S3 de desarrollo; el acceso a su URL firmada depende de la autorización de la API. **S3Mock NO valida las firmas ni garantiza la privacidad**: solo debe ejecutarse en localhost. En producción es obligatorio sustituirlo por R2 o S3 con bucket privado, políticas y firmas efectivas, TLS, configuración del dominio público, controles de capacidad y auditoría de seguridad. La generación de miniaturas corrige la orientación EXIF del JPEG antes de re-encodificarlo, y elimina metadatos EXIF en las imágenes derivadas.
