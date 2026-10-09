@@ -1,0 +1,86 @@
+name: albuvo
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: albuvo
+      POSTGRES_USER: albuvo
+      POSTGRES_PASSWORD: local_albuvo_dev_only
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U albuvo"]
+      interval: 4s
+      retries: 15
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1
+    volumes:
+      - redis_data:/data
+  s3:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: albuvo_local
+      MINIO_ROOT_PASSWORD: local_minio_password_123456
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:5174"
+    volumes:
+      - media_data:/data
+    ports:
+      - "9002:9000"
+      - "127.0.0.1:9003:9001"
+  s3-init:
+    image: minio/mc:latest
+    depends_on:
+      - s3
+    entrypoint: /bin/sh
+    command: -c "until mc alias set local http://s3:9000 albuvo_local local_minio_password_123456; do sleep 2; done; mc mb -p local/albuvo-private-local || true; mc anonymous set none local/albuvo-private-local"
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:8026:8025"
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    working_dir: /var/www/html
+    volumes:
+      - ./services/api:/var/www/html
+    env_file:
+      - ./services/api/.env
+    depends_on:
+      - db
+      - redis
+      - s3-init
+      - mailpit
+    command: sh -c "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"
+    ports:
+      - "8060:8000"
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    working_dir: /var/www/html
+    volumes:
+      - ./services/api:/var/www/html
+    env_file:
+      - ./services/api/.env
+    depends_on:
+      - api
+    command: php artisan queue:work redis --sleep=2 --tries=1 --timeout=60
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./apps/web:/app
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    depends_on:
+      - api
+    command: sh -c "npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5174:5173"
+volumes:
+  pg_data:
+  redis_data:
+  media_data:
