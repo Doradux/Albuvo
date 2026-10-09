@@ -1,6 +1,7 @@
 name: albuvo
 services:
   db:
+    restart: unless-stopped
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: albuvo
@@ -13,11 +14,13 @@ services:
       interval: 4s
       retries: 15
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     command: redis-server --save 60 1
     volumes:
       - redis_data:/data
   s3:
+    restart: unless-stopped
     image: adobe/s3mock:latest
     environment:
       COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: albuvo-private-local
@@ -28,10 +31,12 @@ services:
     ports:
       - "127.0.0.1:9002:9090"
   mailpit:
+    restart: unless-stopped
     image: axllent/mailpit:latest
     ports:
       - "127.0.0.1:8026:8025"
   api:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: infrastructure/docker/api.Dockerfile
@@ -53,6 +58,7 @@ services:
     ports:
       - "127.0.0.1:8060:8000"
   worker:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: infrastructure/docker/api.Dockerfile
@@ -64,7 +70,22 @@ services:
     depends_on:
       - api
     command: php artisan queue:work redis --sleep=2 --tries=1 --timeout=60
+  scheduler:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./services/api:/var/www/html
+    env_file:
+      - ./services/api/.env
+    depends_on:
+      api:
+        condition: service_started
+    command: php artisan schedule:work
   web:
+    restart: unless-stopped
     image: node:22-alpine
     working_dir: /app
     volumes:

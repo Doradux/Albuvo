@@ -45,12 +45,17 @@ class MediaController extends Controller {
         ]);
         $session=DB::transaction(function() use($album,$actor,$v) {
             $a=Album::whereKey($album->id)->lockForUpdate()->firstOrFail();
-            abort_if($a->used_bytes+$a->reserved_bytes+$v['size']>$a->quota_bytes,409,'Sin espacio.');
+            // A retry of the SAME upload must not reserve the quota twice.
             $existing=UploadSession::where('album_id',$a->id)->where('idempotency_key',$v['idempotency_key'])->first();
             if($existing) {
-                abort_unless($existing->user_id===$actor['user_id'] && $existing->guest_contributor_id===$actor['guest_id'],409);
+                abort_unless($existing->user_id===$actor['user_id'] &&
+                    $existing->guest_contributor_id===$actor['guest_id'] &&
+                    $existing->declared_size===$v['size'] && $existing->declared_mime===$v['mime'] &&
+                    $existing->status==='initiated' && $existing->expires_at->isFuture(),409,
+                    'Esta subida ya se utilizó o ha caducado.');
                 return $existing;
             }
+            abort_if($a->used_bytes+$a->reserved_bytes+$v['size']>$a->quota_bytes,409,'Sin espacio.');
             $m=Media::create(['album_id'=>$a->id,'user_id'=>$actor['user_id'],
                 'guest_contributor_id'=>$actor['guest_id'],'original_filename'=>basename($v['filename'])]);
             $s=UploadSession::create(['album_id'=>$a->id,'media_id'=>$m->id,'user_id'=>$actor['user_id'],
