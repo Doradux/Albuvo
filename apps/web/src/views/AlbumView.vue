@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { ArrowLeft, Plus, QrCode, Copy, LockKeyhole, UploadCloud, Check, X, ShieldCheck, Images, Clock3, UsersRound, ImagePlus, Link as LinkIcon, RefreshCcw, Eye, ArrowUpRight } from '@lucide/vue'
 import QRCode from 'qrcode'
@@ -10,7 +10,7 @@ const id=String(route.params.id)
 const album=ref<Album|null>(null); const role=ref('');const canUpload=ref(false);const canModerate=ref(false)
 const photos=ref<Photo[]>([]);const pending=ref<Photo[]>([]);const tab=ref<'gallery'|'moderation'|'sharing'>('gallery')
 const loading=ref(true);const busy=ref(false);const error=ref('');const notice=ref('');const shareUrl=ref('')
-const qr=ref('');const uploadPercent=ref<number|null>(null);const selected=ref<Photo|null>(null)
+const qr=ref('');const uploadPercent=ref<number|null>(null);const uploadStage=ref('');const selected=ref<Photo|null>(null)
 const invites=ref<{id:string;scope:string;revoked_at:string|null;expires_at:string;used_count:number}[]>([])
 const memberEmail=ref('');const memberRole=ref('viewer')
 const isOwner=computed(()=>['owner','admin'].includes(role.value))
@@ -22,11 +22,20 @@ async function refresh() {
   if(canModerate.value) pending.value=(await api<{media:Photo[]}>('GET','/albums/'+id+'/moderation',undefined,guest)).media
 }
 async function load() {
-  await session.hydrate()
-  try {await refresh();if(route.query.new==='1')tab.value='sharing'}
+  try {await session.hydrate();await refresh();if(route.query.new==='1')tab.value='sharing'}
   catch(e){error.value=(e as Error).message}finally{loading.value=false}
 }
-onMounted(load)
+let refreshTimer:ReturnType<typeof setInterval>|undefined
+onMounted(()=>{
+  void load()
+  // Moderator's pending queue updates while the moderation tab is open.
+  refreshTimer=setInterval(()=>{
+    if(tab.value==='moderation' && !busy.value && !document.hidden) {
+      void refresh().catch(()=>{ /* Retain the last successfully loaded gallery. */ })
+    }
+  },12000)
+})
+onUnmounted(()=>{if(refreshTimer)clearInterval(refreshTimer)})
 async function createInvite() {
   busy.value=true;error.value=''
   try {
@@ -51,22 +60,54 @@ async function addMember(){
   try {await api('POST','/albums/'+id+'/members',{email:memberEmail.value,role:memberRole.value});memberEmail.value='';notice.value='Acceso concedido.'}
   catch(e){error.value=(e as Error).message}
 }
+async function waitForPhoto(uploadId:string,guest?:string):Promise<string> {
+  for(let attempt=0;attempt<40;attempt++) {
+    await new Promise(resolve=>setTimeout(resolve,750))
+    const state=await api<{status:string;media_status:string}>('GET','/uploads/'+uploadId,undefined,guest)
+    if(state.media_status==='failed') throw new Error('No se pudo procesar el JPEG. Intenta con otra imagen.')
+    if(state.media_status==='pending'||state.media_status==='approved') return state.media_status
+  }
+  return 'processing'
+}
 async function onFile(event:Event) {
   const input=event.target as HTMLInputElement
-  const file=input.files?.[0];if(!file)return
+  const files=Array.from(input.files||[])
+  if(!files.length||busy.value)return
   error.value='';notice.value=''
-  if(file.type!=='image/jpeg'||file.size>12582912){error.value='Por ahora solo se admiten JPEG de hasta 12 MB.';input.value='';return}
+  if(files.length>20){error.value='Selecciona hasta 20 fotos por tanda.';input.value='';return}
+  if(files.some(f=>f.type!=='image/jpeg'||f.size<100||f.size>12582912)) {
+    error.value='Por ahora solo se admiten JPEG de entre 100 bytes y 12 MB.'
+    input.value='';return
+  }
   busy.value=true;uploadPercent.value=0
+  const guest=getGuest(id)
+  let received=0
+  const problems:string[]=[]
+  let background=0
   try {
-    const guest=getGuest(id)
-    const {upload_id,put_url}=await api<{upload_id:string;put_url:string}>('POST','/albums/'+id+'/uploads',{
-      filename:file.name,mime:'image/jpeg',size:file.size,idempotency_key:crypto.randomUUID()},guest)
-    await uploadToSignedUrl(put_url,file,p=>uploadPercent.value=p)
-    await api('POST','/uploads/'+upload_id+'/complete',{},guest)
-    notice.value='Foto recibida. Se está procesando y pasará por moderación si está activada.'
+    for(const [index,file] of files.entries()) {
+      uploadPercent.value=0
+      uploadStage.value='Foto '+(index+1)+' de '+files.length+': subiendo...'
+      try {
+        const {upload_id,put_url}=await api<{upload_id:string;put_url:string}>('POST','/albums/'+id+'/uploads',{
+          filename:file.name,mime:'image/jpeg',size:file.size,idempotency_key:crypto.randomUUID()
+        },guest)
+        await uploadToSignedUrl(put_url,file,p=>uploadPercent.value=p)
+        uploadStage.value='Foto '+(index+1)+' de '+files.length+': procesando...'
+        await api('POST','/uploads/'+upload_id+'/complete',{},guest)
+        const status=await waitForPhoto(upload_id,guest)
+        if(status==='processing') background++
+        received++
+      }catch(e){problems.push(file.name+': '+(e as Error).message)}
+    }
     await refresh()
-  }catch(e){error.value=(e as Error).message}
-  finally {busy.value=false;uploadPercent.value=null;input.value=''}
+    if(received) notice.value=received+' foto'+(received===1?' recibida':'s recibidas')+
+      '. '+(background?'Algunas siguen procesándose. ':'')+
+      (album.value?.require_upload_approval?'Quedarán visibles tras la aprobación.':'Ya están en la galería.')
+    if(problems.length) error.value=problems.join(' | ')
+  }finally {
+    busy.value=false;uploadPercent.value=null;uploadStage.value='';input.value=''
+  }
 }
 async function decide(photo:Photo,action:'approve'|'reject'){
   busy.value=true;error.value=''
@@ -87,11 +128,11 @@ const myUploads=computed(()=>photos.value.filter(p=>p.status!=='approved'))
     <template v-else>
       <div class="album-hero"><div class="album-hero-art"><span>✿</span></div><div class="album-hero-copy"><span class="pill"><LockKeyhole :size="14"/> Álbum privado</span><h1>{{album.title}}</h1><p>{{album.description||'Cada foto cuenta una historia. Esta es la vuestra.'}}</p><div class="album-meta"><span><Images :size="17"/> {{published.length}} fotos</span><span><ShieldCheck :size="17"/> {{canModerate?'Puedes moderar':role==='guest'?'Invitado':'Acceso autorizado'}}</span><span>{{bytes(album.used_bytes)}} / {{bytes(album.quota_bytes)}}</span></div></div></div>
       <div v-if="notice" class="form-success">{{notice}}</div><div v-if="error" class="form-error" role="alert">{{error}}</div>
-      <div class="album-toolbar"><div class="tabs"><button :class="{selected:tab==='gallery'}" @click="tab='gallery'"><Images :size="18"/> Galería</button><button v-if="canModerate" :class="{selected:tab==='moderation'}" @click="tab='moderation'"><ShieldCheck :size="18"/> Pendientes <span v-if="pending.length" class="tab-count">{{pending.length}}</span></button><button v-if="isOwner" :class="{selected:tab==='sharing'}" @click="tab='sharing';loadInvites()"><UsersRound :size="18"/> Compartir</button></div><label v-if="canUpload" class="btn btn-dark upload-label"><UploadCloud :size="18"/> {{busy?'Subiendo...':'Subir foto'}}<input type="file" accept="image/jpeg,.jpg,.jpeg" :disabled="busy" @change="onFile" hidden/></label></div>
-      <div v-if="uploadPercent!==null" class="upload-progress"><div class="upload-progress-top"><span>Subiendo foto...</span><strong>{{uploadPercent}} %</strong></div><div class="progress-track"><div :style="{width:uploadPercent+'%'}"></div></div></div>
+      <div class="album-toolbar"><div class="tabs"><button :class="{selected:tab==='gallery'}" @click="tab='gallery'"><Images :size="18"/> Galería</button><button v-if="canModerate" :class="{selected:tab==='moderation'}" @click="tab='moderation'"><ShieldCheck :size="18"/> Pendientes <span v-if="pending.length" class="tab-count">{{pending.length}}</span></button><button v-if="isOwner" :class="{selected:tab==='sharing'}" @click="tab='sharing';loadInvites()"><UsersRound :size="18"/> Compartir</button></div><label v-if="canUpload" class="btn btn-dark upload-label"><UploadCloud :size="18"/> {{busy?'Subiendo...':'Subir fotos'}}<input type="file" accept="image/jpeg,.jpg,.jpeg" multiple :disabled="busy" @change="onFile" hidden/></label></div>
+      <div v-if="uploadPercent!==null" class="upload-progress"><div class="upload-progress-top"><span>{{uploadStage||'Subiendo fotos...'}}</span><strong>{{uploadPercent}} %</strong></div><div class="progress-track"><div :style="{width:uploadPercent+'%'}"></div></div></div>
       <section v-if="tab==='gallery'"><div class="album-section-head"><h2>Vuestros recuerdos</h2><p>Una historia contada desde todos los puntos de vista.</p></div>
         <div v-if="published.length" class="photo-grid"><button v-for="photo in published" :key="photo.id" class="photo-card" @click="selected=photo"><img :src="photo.thumbnail_url||photo.preview_url||''" alt="Fotografía del álbum" loading="lazy"/><span class="photo-hover"><Eye :size="23"/></span></button></div>
-        <div v-else class="empty-state"><div class="empty-art"><ImagePlus :size="54" :stroke-width="1.3"/></div><h3>Un álbum esperando historias</h3><p>La primera foto siempre tiene algo especial.</p><label v-if="canUpload" class="btn btn-dark upload-label"><Plus :size="18"/> Subir primera foto<input type="file" accept="image/jpeg" :disabled="busy" @change="onFile" hidden/></label></div>
+        <div v-else class="empty-state"><div class="empty-art"><ImagePlus :size="54" :stroke-width="1.3"/></div><h3>Un álbum esperando historias</h3><p>La primera foto siempre tiene algo especial.</p><label v-if="canUpload" class="btn btn-dark upload-label"><Plus :size="18"/> Subir primeras fotos<input type="file" accept="image/jpeg" multiple :disabled="busy" @change="onFile" hidden/></label></div>
         <div v-if="myUploads.length" class="my-uploads"><h3>Mis fotos en proceso</h3><div v-for="p in myUploads" :key="p.id" class="pending-row"><Clock3 :size="18"/><span>Foto del {{new Date(p.created_at).toLocaleDateString('es-ES')}}</span><span class="status-pill">{{p.status==='pending'?'Pendiente de aprobación':p.status==='failed'?'Error de procesamiento':'Procesando'}}</span></div></div>
       </section>
       <section v-else-if="tab==='moderation'"><div class="album-section-head"><h2>Fotos pendientes</h2><p>Las fotos de invitados se quedan privadas hasta que las apruebes.</p></div>
