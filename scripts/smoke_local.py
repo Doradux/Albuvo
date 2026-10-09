@@ -117,7 +117,10 @@ def main():
     step("Acceso como invitado sin cuenta y límite de invitación")
 
     buffer = io.BytesIO()
-    Image.new("RGB", (720, 480), color=(60, 155, 113)).save(buffer, format="JPEG", quality=83)
+    image = Image.new("RGB", (720, 480), color=(60, 155, 113))
+    orientation = image.getexif()
+    orientation[274] = 6  # Rotate 90° clockwise without touching the pixel buffer.
+    image.save(buffer, format="JPEG", quality=83, exif=orientation)
     binary = buffer.getvalue()
     prepared = call(guest, "POST", f"/albums/{album_id}/uploads", {
         "filename": "foto-test.jpg", "mime": "image/jpeg", "size": len(binary),
@@ -142,8 +145,11 @@ def main():
     assert media_status == "pending", f"Worker no procesó imagen: {media_status}"
     moderated = call(owner, "GET", f"/albums/{album_id}/moderation")["media"]
     assert len(moderated) == 1 and moderated[0]["thumbnail_url"]
+    assert moderated[0]["width"] == 480 and moderated[0]["height"] == 720, "EXIF orientation ignored"
     preview = requests.get(moderated[0]["thumbnail_url"], timeout=TIMEOUT)
     assert preview.status_code == 200 and preview.content[:3] == b"\xff\xd8\xff"
+    assert Image.open(io.BytesIO(preview.content)).size == (280, 420), "JPEG thumbnail not rotated"
+    assert not Image.open(io.BytesIO(preview.content)).getexif(), "EXIF still present in thumbnail"
     step("Worker genera JPEG/miniatura, queda pendiente de moderación")
 
     gallery_before = call(outsider, "GET", f"/albums/{album_id}/media", expected=(404,))

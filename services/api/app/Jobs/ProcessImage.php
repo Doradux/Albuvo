@@ -24,6 +24,26 @@ class ProcessImage implements ShouldQueue {
         imagedestroy($canvas);
         return [$bytes,$nw,$nh];
     }
+    private function orientJpeg($source, string $binary) {
+        // Phones commonly store the orientation as EXIF instead of rotating pixels.
+        // Read it only for transformation; no metadata is copied to derivatives.
+        $exif=@exif_read_data('data://image/jpeg;base64,'.base64_encode($binary),'IFD0',true);
+        $orientation=(int)($exif['IFD0']['Orientation']??1);
+        if(in_array($orientation,[2,4,5,7],true)) {
+            imageflip($source,in_array($orientation,[2,5,7],true)?IMG_FLIP_HORIZONTAL:IMG_FLIP_VERTICAL);
+        }
+        $degrees=match($orientation) {
+            3=>180,5,8=>90,6,7=>270,default=>0
+        };
+        if($degrees!==0) {
+            $rotated=imagerotate($source,$degrees,0);
+            if($rotated!==false) {
+                imagedestroy($source);
+                return $rotated;
+            }
+        }
+        return $source;
+    }
     public function handle(): void {
         $session=UploadSession::where('media_id',$this->mediaId)->firstOrFail();
         if($session->status!=='processing') return;
@@ -36,13 +56,15 @@ class ProcessImage implements ShouldQueue {
                 throw new \RuntimeException('Formato o resolución no soportada');
             $source=@imagecreatefromstring($binary);
             if(!$source) throw new \RuntimeException('JPEG corrupto');
+            $source=$this->orientJpeg($source,$binary);
+            $displayWidth=imagesx($source);$displayHeight=imagesy($source);
             [$preview,$pw,$ph]=$this->jpeg($source,1280,83);
             [$thumb,$tw,$th]=$this->jpeg($source,420,78);
             imagedestroy($source);
             $base='private/'.Str::random(24).'/'.$this->mediaId.'/';
             $disk->put($base.'preview.jpg',$preview,['visibility'=>'private','ContentType'=>'image/jpeg']);
             $disk->put($base.'thumb.jpg',$thumb,['visibility'=>'private','ContentType'=>'image/jpeg']);
-            DB::transaction(function() use($session,$info,$base,$preview,$thumb,$pw,$ph,$tw,$th) {
+            DB::transaction(function() use($session,$info,$base,$preview,$thumb,$pw,$ph,$tw,$th,$displayWidth,$displayHeight) {
                 $album=Album::whereKey($session->album_id)->lockForUpdate()->firstOrFail();
                 $media=Media::whereKey($session->media_id)->lockForUpdate()->firstOrFail();
                 if($media->status!=='processing') return;
@@ -54,7 +76,7 @@ class ProcessImage implements ShouldQueue {
                 $actual=strlen($preview)+strlen($thumb);
                 $album->reserved_bytes=max(0,$album->reserved_bytes-$session->reserved_bytes);
                 $album->used_bytes+=$actual; $album->save();
-                $media->update(['mime_detected'=>'image/jpeg','width'=>$info[0],'height'=>$info[1],
+                $media->update(['mime_detected'=>'image/jpeg','width'=>$displayWidth,'height'=>$displayHeight,
                   'byte_size'=>$actual,'status'=>$album->require_upload_approval?'pending':'approved',
                   'published_at'=>$album->require_upload_approval?null:now()]);
                 $session->update(['status'=>'completed','finalized_at'=>now()]);
