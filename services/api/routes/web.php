@@ -24,6 +24,9 @@ Route::prefix('api/v1')->group(function () {
         Route::post('/auth/resend',[AuthC::class,'resend'])->middleware('throttle:3,1');
         Route::get('/albums',[Albums::class,'index']);
         Route::post('/albums',[Albums::class,'store']);
+        Route::patch('/albums/{album}',[Albums::class,'update']);
+        Route::get('/albums/{album}/members',[Albums::class,'members']);
+        Route::delete('/albums/{album}/members/{member}',[Albums::class,'removeMember']);
         Route::get('/albums/{album}/invites',[Albums::class,'invites']);
         Route::post('/albums/{album}/invites',[Albums::class,'createInvite']);
         Route::delete('/albums/{album}/invites/{invite}',[Albums::class,'revokeInvite']);

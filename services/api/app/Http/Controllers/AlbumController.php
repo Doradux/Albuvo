@@ -95,6 +95,36 @@ class AlbumController extends Controller {
         $invite->update(['revoked_at'=>now()]);
         return response()->noContent();
     }
+    public function update(Request $r, Album $album) {
+        $actor=$this->access($r,$album);
+        abort_unless($actor['role']==='owner',403,'Solo el propietario puede cambiar los ajustes.');
+        $data=$r->validate([
+            'title'=>'sometimes|required|string|min:1|max:100',
+            'description'=>'nullable|string|max:500',
+            'allow_guest_upload'=>'sometimes|required|boolean',
+            'require_upload_approval'=>'sometimes|required|boolean',
+        ]);
+        $album->update($data);
+        return $this->show($r,$album->fresh());
+    }
+    public function members(Request $r, Album $album) {
+        $actor=$this->access($r,$album);
+        abort_unless(in_array($actor['role'],['owner','admin'],true),403);
+        return ['members'=>$album->members()->where('state','active')
+            ->join('users','users.id','=','album_members.user_id')
+            ->orderBy('album_members.created_at')
+            ->get(['album_members.id','album_members.role','users.name','users.email'])];
+    }
+    public function removeMember(Request $r, Album $album, AlbumMember $member) {
+        $actor=$this->access($r,$album);
+        abort_unless(in_array($actor['role'],['owner','admin'],true),403);
+        abort_unless($member->album_id===$album->id,404);
+        abort_if($member->role==='owner' ||
+            ($actor['role']==='admin' && $member->role==='admin'),403,
+            'No se puede retirar este permiso.');
+        $member->update(['state'=>'removed']);
+        return response()->noContent();
+    }
     public function addMember(Request $r, Album $album) {
         $actor=$this->access($r,$album);
         abort_unless(in_array($actor['role'],['owner','admin']),403);
