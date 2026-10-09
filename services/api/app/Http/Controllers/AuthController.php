@@ -10,7 +10,11 @@ use Illuminate\Validation\Rules\Password;
 
 class AuthController extends Controller {
     public function csrf(): array { return ['csrf_token'=>csrf_token()]; }
-    public function me(Request $r): array { return ['user'=>$r->user()?->only(['id','name','email','email_verified_at'])]; }
+    public function me(Request $r): array {
+        $user=$r->user();
+        return ['user'=>$user ? [...$user->only(['id','name','email','email_verified_at']),
+            'google_connected'=>(bool)$user->google_id] : null];
+    }
     public function register(Request $r) {
         $v=$r->validate([
             'name'=>'required|string|min:2|max:80',

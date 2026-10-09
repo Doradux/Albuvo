@@ -2,11 +2,15 @@
 use Illuminate\Support\Facades\Route;
 Route::get('/api/v1/health', fn () => ['status' => 'ok']);
 use App\Http\Controllers\AuthController as AuthC;
+use App\Http\Controllers\GoogleAuthController as GoogleAuth;
 use App\Http\Controllers\AlbumController as Albums;
 use App\Http\Controllers\MediaController as MediaC;
 use Illuminate\Foundation\Auth\EmailVerificationRequest;
 Route::prefix('api/v1')->group(function () {
     Route::get('/auth/csrf',[AuthC::class,'csrf']);
+    Route::post('/auth/google/prepare',[GoogleAuth::class,'prepareSignup'])->middleware('throttle:10,1');
+    Route::get('/auth/google/redirect',[GoogleAuth::class,'redirect'])->middleware('throttle:20,1');
+    Route::get('/auth/google/callback',[GoogleAuth::class,'callback'])->middleware('throttle:20,1');
     Route::get('/me',[AuthC::class,'me']);
     Route::post('/auth/register',[AuthC::class,'register'])->middleware('throttle:5,1');
     Route::post('/auth/login',[AuthC::class,'login'])->middleware('throttle:10,1');
